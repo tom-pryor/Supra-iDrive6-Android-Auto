@@ -671,6 +671,42 @@ Supported controller protocols (both are decoded at the same time, as the stock 
 CCS hard keys use the same slots as CCS35up (sensor bit n = slot n), so `NBT_KEY_<slot>` overrides apply to both.
 nbt-aad logs the first 40 C10/C20 messages raw (`[Knob] ... (CCS protocol)`).
 
+## GPS source probe (`test_gps`)
+
+`test_gps` (built by `make all`) is a stand-alone probe that finds where the head unit's GPS position can be read
+from, for Android Auto's LOCATION sensor. It doesn't touch Android Auto and only reads: the only requests it sends are
+MOST `Get`s.
+
+What the first car run found (NBT Evo, parked with a fix):
+- **MOST FBlock 0x52 inst 00, fkt 0x440 Status**, about 1 Hz, from the navigation (device 0x2021) to the HMI:
+  longitude then latitude (big-endian signed 32-bit, 360/2^32 degrees), 8 bytes not decoded yet, then the UTC fix
+  date and time. No fix = `FF FF FF FF`.
+- 52/00 fkt 0x243 (every 2 s) and FBlock 0xCD/01 fkt 0x20B (1 Hz) carry a second position about 5 m away,
+  probably map-matched. 52/00 fkt 0xC18 lists the satellites in view (PRN, C/N0).
+- The DSI services (`DNAVIPos`, `DNAVISensor`, versions 1-6) did not attach; `/pps` has nothing.
+- The MOST observe client gets copies of all HU-internal MOST traffic, not only the FBlocks it registers. Registry
+  entries are `{device address, FBlock<<8|Inst}`.
+
+Run it with the car outside (GPS fix), giving the rough position from your phone so real coordinates are flagged:
+
+```
+./test_gps -L 51.5014,-0.1419 > /mnt/umass01200t7/gps.log 2>&1
+```
+
+It runs for 150 s (`-t N`) and checks:
+- **System:** nav and connectivity processes, `/dev/nav/*` (stat only, never opened), QNET nodes, and `/pps`
+  objects that look like position data.
+- **DSI:** `NavigationPositioning` serves `Pos.DNAVIPos` / `PosReal.DNAVIPos` and `Sensors.DNAVISensor`. Their version
+  is unknown, so one child process per service and version (`-V 1,2,..`, default 1-6) tries to attach and logs every
+  attribute it gets.
+- **MOST:** the probe logs the MOST registry, asks the head unit's own inst-01 FBlocks (devices 0x2xxx) for their
+  function lists (`Get FktIDs`), then `Get`s each function. `-p` makes it passive, `-q` stops after the function
+  lists, `-F HEX,..` picks the FBlocks, `-X tx,ctl,tag` overrides the send fields.
+
+Every payload goes through a position finder (several scalings, both byte orders). The summary at the end lists the
+candidates by source, `MATCH` first. CDS (`navigation.*` in the iDrive app framework) only exists inside the HMI
+process, so the probe can't check it.
+
 ---
 
 ## How it works
@@ -856,7 +892,7 @@ config was `/opt/aa/menu.cfg` (`menu=`, `text=`, `icon=`, `focus=`, `order=`) an
 On the QNX SDP 6.5 VM (qcc, GCC 4.4.2):
 
 ```
-make all        # nbt-aad, test_display, test_controls, plugin/, rhmiapp/
+make all        # nbt-aad, test_display, test_controls, test_gps, plugin/, rhmiapp/
 make rhmiapp    # only the iDrive app
 ```
 
@@ -882,6 +918,7 @@ Host tests in `tests/` build with a Linux g++ (WSL is fine):
 | `test_usb_accessory` | USB accessory: devctl layout, frame lengths, bridge over a fake `/dev/oap` (pty), session limit, unplug, stop, a writer stuck on a phone that stopped reading, open / switch retries |
 | `test_touch`, `test_touch_frame` | Touch decode against real captures (Supra pinch, 1440x540 split frames) |
 | `test_ccs_decoder`, `test_ccs_push`, `test_most_msg` | Controller decode (CCS35up + old CCS) against car captures |
+| `test_gps_probe` | `test_gps` position finder, FktIDs and registry decoders |
 | `test_ctl_wizard` | Wizard logic and env output |
 | `test_voice_scenario` | Voice scenario default / off switch |
 | `test_car_config` | `carplay.ini` parsing, NBT_SCREEN / NBT_VEHICLE |
@@ -908,7 +945,8 @@ Host tests in `tests/` build with a Linux g++ (WSL is fine):
   - other: `crash_handler`, `license_text.hpp`.
 - `include/`: `dhu_sdp.h` (canned service discovery), `a2i_client.h`, `dsi_controller.h`, `screen_video.h`.
 - `rhmiapp/`: the iDrive PluginApp. `plugin/`: the legacy HmiMain3D plugin.
-- `test_controls.cpp`: the controller monitor / wizard. `test_display.cpp`: a display test.
+- `test_controls.cpp`: the controller monitor / wizard. `test_gps.cpp` (+ `src/gps_probe.hpp`): the GPS source
+  probe. `test_display.cpp`: a display test.
 
 ## Known issues and next steps
 

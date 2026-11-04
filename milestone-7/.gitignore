@@ -6,6 +6,7 @@ nbt-aad
 wfd_probe
 test_display
 test_controls
+test_gps
 plugin/libhmiaad.so
 plugin/plugin_check
 rhmiapp/libNbtAad.so

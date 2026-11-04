@@ -45,7 +45,7 @@ TARGET = nbt-aad
 
 .PHONY: all clean
 
-all: $(TARGET) test_display test_controls plugin rhmiapp wfd_probe
+all: $(TARGET) test_display test_controls test_gps plugin rhmiapp wfd_probe
 
 $(TARGET): $(OBJS)
 	@echo [LINK] $@
@@ -61,6 +61,11 @@ test_controls: test_controls.cpp src/dsi_client.cpp src/dsi_client.hpp src/most_
 	@echo [CXX] test_controls.cpp
 	$(CXX) $(CXXFLAGS) -o test_controls test_controls.cpp src/dsi_client.cpp
 	@echo [DONE] Built test_controls for QNX armv7le
+
+test_gps: test_gps.cpp src/dsi_client.cpp src/dsi_client.hpp src/most_msg.hpp src/gps_probe.hpp
+	@echo [CXX] test_gps.cpp
+	$(CXX) $(CXXFLAGS) -o test_gps test_gps.cpp src/dsi_client.cpp -lm
+	@echo [DONE] Built test_gps for QNX armv7le
 
 # ---- HmiMain3D plugin (plugin/): GNU libstdc++ (_gpp variant) to match BMW's plugins, PIC shared object ----
 PLUGIN_CXX      = $(QCC) -Vgcc_ntoarmv7le_gpp
@@ -112,4 +117,4 @@ wfd_probe: tools/wfd_probe.cpp src/alt_wifi.hpp src/wireless_setup.hpp
 
 clean:
 	@echo [CLEAN] Removing object files and binaries
-	rm -f $(OBJS) $(OBJS:.o=.d) $(TARGET) test_display test_controls plugin/libhmiaad.so plugin/plugin_check wfd_probe
+	rm -f $(OBJS) $(OBJS:.o=.d) $(TARGET) test_display test_controls test_gps plugin/libhmiaad.so plugin/plugin_check wfd_probe
