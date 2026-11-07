@@ -61,11 +61,11 @@ The flash drive must be formatted in FAT32 or exFAT. You can do this by right cl
 
 <img width="361" height="488" alt="image" src="https://github.com/user-attachments/assets/d12c189c-12c1-4dae-ae5a-2901bfd109fa" />
 
-Once formatted, head over to the [Releases page](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/releases/) and download the latest nbt-aad, pf_aa, and release.zip
+Once formatted, head over to the [Releases page](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/releases/) and download the latest nbt-aad, nbt-aad-coding, pf_aa, and release.zip
 
 <img width="880" height="413" alt="image" src="https://github.com/user-attachments/assets/a67a3675-966a-4ddb-898f-9fb2151cdcd4" />
 
-Please **extract** releases.zip into a folder on your flash drive, and copy nbt-aad and pf_aa into the root of your flash drive. If done correctly, it shoud look like this:
+Please **extract** releases.zip into a folder on your flash drive, and copy nbt-aad, nbt-aad-coding and pf_aa into the root of your flash drive. If done correctly, it shoud look like this:
 
 <img width="999" height="241" alt="image" src="https://github.com/user-attachments/assets/446cd97a-104d-47e4-ac64-8ca97d713ada" />
 
@@ -100,6 +100,8 @@ mkdir aa
 cd /opt/aa/
 cp /mnt/umassXXXXX/nbt-aad ./
 chmod +x /opt/aa/nbt-aad
+cp /mnt/umassXXXXX/nbt-aad-coding ./
+chmod +x /opt/aa/nbt-aad-coding
 ```
 
 We're then install the plugins, which is done with these commands:

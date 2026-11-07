@@ -441,26 +441,28 @@ ServiceDiscovery referenceManifest(const SdrIdentity& id) {
     return m;
 }
 
-bool configureDriverPosition(ServiceDiscovery& m) {
+bool configureDriverPosition(ServiceDiscovery& m, int typLenkung) {
     const int was = m.driverPosition;
     const char* side = getenv("NBT_DRIVER_SIDE");
-    if (side && strcmp(side, "right") == 0) {
-        m.driverPosition = DRIVER_POSITION_RIGHT;
-        printf("[SDR] driver's side: right (NBT_DRIVER_SIDE)\n");
-    } else if (side && strcmp(side, "left") == 0) {
-        m.driverPosition = DRIVER_POSITION_LEFT;
-        printf("[SDR] driver's side: left (NBT_DRIVER_SIDE)\n");
+    if (side && (strcmp(side, "left") == 0 || strcmp(side, "right") == 0)) {
+        m.driverPosition = strcmp(side, "right") == 0 ? DRIVER_POSITION_RIGHT : DRIVER_POSITION_LEFT;
+        printf("[SDR] driver's side: %s (NBT_DRIVER_SIDE)\n", side);
     } else {
         if (side && *side) printf("[SDR] NBT_DRIVER_SIDE='%s' ignored: use left or right.\n", side);
-        m.driverPosition = DRIVER_POSITION_LEFT;
-        printf("[SDR] driver's side: left (default)\n");
+        if (typLenkung == 0 || typLenkung == 1) {
+            m.driverPosition = typLenkung == 1 ? DRIVER_POSITION_RIGHT : DRIVER_POSITION_LEFT;
+            printf("[SDR] driver's side: %s (coding)\n", typLenkung == 1 ? "right" : "left");
+        } else {
+            m.driverPosition = DRIVER_POSITION_LEFT;
+            printf("[SDR] driver's side: left (coding not available)\n");
+        }
     }
     return m.driverPosition != was;
 }
 
-ServiceDiscovery sessionManifest(const SdrIdentity& id) {
+ServiceDiscovery sessionManifest(const SdrIdentity& id, int typLenkung) {
     ServiceDiscovery m = referenceManifest(id);
-    configureDriverPosition(m);
+    configureDriverPosition(m, typLenkung);
     configureSensors(m);
     configureMainVideo(m);
     configureRailHide(m);

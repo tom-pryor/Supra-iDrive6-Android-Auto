@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include "nbt_env.hpp"
 #include "sdr_builder.hpp"
+#include "car/coding_read.hpp"
 #include "crash_handler.hpp"
 #include <sys/select.h>
 #include <sys/time.h>
@@ -802,7 +803,7 @@ bool AASession::sendServiceDiscoveryResponse() {
     printf("[AASession] ServiceDiscovery identity: %s %s %s (BT channel: %s)\n",
            ident.carMake.c_str(), ident.carModel.c_str(), ident.carYear.c_str(),
            ident.btAdapterAddress.empty() ? "none" : ident.btAdapterAddress.c_str());
-    const ServiceDiscovery manifest = sessionManifest(ident);
+    const ServiceDiscovery manifest = sessionManifest(ident, car::codingValue(car::kTypLenkung));
     const std::vector<uint8_t> sdr = serializeManifest(manifest);
     std::vector<uint8_t> plain_sdr;
     plain_sdr.push_back(0x00);

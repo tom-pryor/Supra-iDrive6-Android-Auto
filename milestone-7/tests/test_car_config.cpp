@@ -77,33 +77,24 @@ static int driverPositionOnWire(const std::vector<uint8_t>& p) {
 
 static void testDriverPosition() {
     const ServiceDiscovery reference = referenceManifest(dhuIdentity());
+    CHECK(reference.driverPosition == DRIVER_POSITION_LEFT);
     CHECK(driverPositionOnWire(serializeManifest(reference)) == DRIVER_POSITION_LEFT);
-
-    // Left unless told otherwise, including by anything it doesn't understand.
     unsetenv("NBT_DRIVER_SIDE");
-    {
+
+    // The coding decides. No answer leaves the side on left, what the phone always heard before.
+    const struct { int coded; int position; } kCases[] = {
+        { 1, DRIVER_POSITION_RIGHT }, { 0, DRIVER_POSITION_LEFT }, { -1, DRIVER_POSITION_LEFT }, { 2, DRIVER_POSITION_LEFT }, { 15, DRIVER_POSITION_LEFT },
+    };
+    for (size_t i = 0; i < sizeof(kCases) / sizeof(kCases[0]); ++i) {
         ServiceDiscovery m = reference;
-        CHECK(!configureDriverPosition(m) && m.driverPosition == DRIVER_POSITION_LEFT);
-    }
-    const char* const kIgnored[] = { "", "RHD", "Right", "right ", "1" };
-    for (size_t i = 0; i < sizeof(kIgnored) / sizeof(kIgnored[0]); ++i) {
-        setenv("NBT_DRIVER_SIDE", kIgnored[i], 1);
-        ServiceDiscovery m = reference;
-        m.driverPosition = DRIVER_POSITION_RIGHT;
-        CHECK(configureDriverPosition(m) && m.driverPosition == DRIVER_POSITION_LEFT);
+        CHECK(configureDriverPosition(m, kCases[i].coded) == (kCases[i].position != DRIVER_POSITION_LEFT));
+        CHECK(driverPositionOnWire(serializeManifest(m)) == kCases[i].position);
     }
 
-    setenv("NBT_DRIVER_SIDE", "left", 1);
+    // Only that one byte of the message changes.
     {
         ServiceDiscovery m = reference;
-        CHECK(!configureDriverPosition(m) && driverPositionOnWire(serializeManifest(m)) == DRIVER_POSITION_LEFT);
-    }
-
-    // Right changes that one byte of the message and nothing else.
-    setenv("NBT_DRIVER_SIDE", "right", 1);
-    {
-        ServiceDiscovery m = reference;
-        CHECK(configureDriverPosition(m) && driverPositionOnWire(serializeManifest(m)) == DRIVER_POSITION_RIGHT);
+        CHECK(configureDriverPosition(m, 1));
         const std::vector<uint8_t> a = serializeManifest(reference), b = serializeManifest(m);
         CHECK(a.size() == b.size());
         size_t diffs = 0;
@@ -111,10 +102,29 @@ static void testDriverPosition() {
         CHECK(diffs == 1);
     }
 
-    // The manifest a session sends follows it.
-    CHECK(driverPositionOnWire(serializeManifest(sessionManifest(dhuIdentity()))) == DRIVER_POSITION_RIGHT);
+    // NBT_DRIVER_SIDE wins over the coding in both directions. Anything else is ignored.
+    setenv("NBT_DRIVER_SIDE", "right", 1);
+    {
+        ServiceDiscovery m = reference;
+        CHECK(configureDriverPosition(m, 0) && m.driverPosition == DRIVER_POSITION_RIGHT);
+    }
+    setenv("NBT_DRIVER_SIDE", "left", 1);
+    {
+        ServiceDiscovery m = reference;
+        CHECK(!configureDriverPosition(m, 1) && m.driverPosition == DRIVER_POSITION_LEFT);
+    }
+    const char* const kIgnored[] = { "RHD", "", "Right" };
+    for (size_t i = 0; i < sizeof(kIgnored) / sizeof(kIgnored[0]); ++i) {
+        setenv("NBT_DRIVER_SIDE", kIgnored[i], 1);
+        ServiceDiscovery m = reference;
+        CHECK(configureDriverPosition(m, 1) && m.driverPosition == DRIVER_POSITION_RIGHT);
+    }
     unsetenv("NBT_DRIVER_SIDE");
-    CHECK(driverPositionOnWire(serializeManifest(sessionManifest(dhuIdentity()))) == DRIVER_POSITION_LEFT);
+
+    // The session's manifest carries it, and without a coding value stays as it was.
+    CHECK(sessionManifest(dhuIdentity(), 1).driverPosition == DRIVER_POSITION_RIGHT);
+    CHECK(sessionManifest(dhuIdentity(), 0).driverPosition == DRIVER_POSITION_LEFT);
+    CHECK(sessionManifest(dhuIdentity()).driverPosition == DRIVER_POSITION_LEFT);
 }
 
 int main() {

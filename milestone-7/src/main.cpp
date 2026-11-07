@@ -107,6 +107,7 @@
 #include "car/volume_input.hpp"
 #include "car/input_activity.hpp"
 #include "car/gps.hpp"
+#include "car/coding_read.hpp"
 #include "most/client.hpp"
 #include "most/trace.hpp"
 #include "crash_handler.hpp"
@@ -1708,6 +1709,9 @@ int main(int argc, char* argv[]) {
     else
         printf("[Car] phone canvas %dx%d scaled to fill the panel: top-left %dx%d visible, MMR dst %dx%d, touch scale %.3f\n",
                nbt::videoCanvasWidth(), nbt::videoCanvasHeight(), nbt::canvasColsShown(), nbt::canvasRowsShown(), nbt::mmrDstWidth(), nbt::mmrDstHeight(), nbt::touchScale());
+
+    // The head unit's coding values. In the background: nothing here waits for them.
+    nbt::car::startCodingRead();
 
     // 1. Initialize Video Pipeline (libscreen.so window at the panel size)
     nbt::VideoManager video;

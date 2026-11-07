@@ -19,8 +19,9 @@ SdrIdentity dhuIdentity();
 // id.btAdapterAddress is set. dhuIdentity() gives exactly the DHU's bytes (tests/dhu_sdp.h).
 ServiceDiscovery referenceManifest(const SdrIdentity& id);
 
-// The manifest a session sends: referenceManifest(id) with all the settings below applied.
-ServiceDiscovery sessionManifest(const SdrIdentity& id);
+// The manifest a session sends: referenceManifest(id) with all the settings below applied. typLenkung is the coding value
+// (car/coding.hpp, -1 if there is none), for configureDriverPosition.
+ServiceDiscovery sessionManifest(const SdrIdentity& id, int typLenkung = -1);
 
 // The manifest as ServiceDiscoveryResponse protobuf, without the message id.
 std::vector<uint8_t> serializeManifest(const ServiceDiscovery& manifest);
@@ -86,9 +87,9 @@ int keepAudioSinkRate(ServiceDiscovery& manifest, unsigned channel, uint32_t rat
 // leaves no doubt about the rate. Other modes unchanged. Returns the number of offers removed.
 int limitGuidanceOffers(ServiceDiscovery& manifest);
 
-// The side the phone is told the driver sits on: NBT_DRIVER_SIDE = left or right. Unset or anything else is left, what the
-// phone always heard before. Returns true if the manifest changed. Logs the side.
-bool configureDriverPosition(ServiceDiscovery& manifest);
+// The side the phone is told the driver sits on: NBT_DRIVER_SIDE (left or right), else typLenkung (0 left, 1 right), else
+// left, which is what the phone always heard before. Returns true if the manifest changed. Logs the side and its source.
+bool configureDriverPosition(ServiceDiscovery& manifest, int typLenkung);
 
 // Pure helper used by dropSdrChannels (host-tested): parses "8, 9,14" into ids (max 16).
 size_t parseChannelList(const char* s, int* ids, size_t max_ids);
