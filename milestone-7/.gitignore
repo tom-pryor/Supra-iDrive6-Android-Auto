@@ -3,6 +3,7 @@ release/
 *.o
 *.d
 nbt-aad
+nbt-aad-coding
 wfd_probe
 pf_aa
 test_display

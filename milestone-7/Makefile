@@ -53,6 +53,7 @@ SRCS = src/main.cpp \
        src/car/geoid.cpp \
        src/car/gps.cpp \
        src/sdr_builder.cpp \
+       src/car/coding_read.cpp \
        src/crash_handler.cpp \
        src/kombi_client.cpp \
        src/kombi_nav.cpp \
@@ -71,7 +72,7 @@ TARGET = nbt-aad
 check:
 	$(MAKE) -C tests check
 
-all: $(TARGET) test_display test_controls plugin rhmiapp wfd_probe pf_aa
+all: $(TARGET) nbt-aad-coding test_display test_controls plugin rhmiapp wfd_probe pf_aa
 
 $(TARGET): $(OBJS)
 	@echo [LINK] $@
@@ -147,6 +148,14 @@ pf_aa: tools/pf_aa.cpp tools/pf_aa.hpp
 	$(CXX) $(CXXFLAGS) -o $@ tools/pf_aa.cpp -lang-c++
 	@echo [DONE] Built $@
 
+# nbt-aad-coding: prints the coding blocks for the daemon, which looks for it beside itself, then in /opt/aa.
+# The dynamic list exports only the symbols that the firmware's settings library expects its host to provide: exporting
+# everything would offer our C++ runtime copies to its no-exceptions runtime.
+nbt-aad-coding: tools/nbt_aad_coding.cpp tools/nbt_aad_coding.syms src/car/coding.hpp
+	@echo [CXX] tools/nbt_aad_coding.cpp
+	$(CXX) $(CXXFLAGS) -Wl,--dynamic-list=tools/nbt_aad_coding.syms -o $@ tools/nbt_aad_coding.cpp -lang-c++
+	@echo [DONE] Built $@
+
 # Standalone volume-key capture/prompter: prints "press volume up 5x", waits, prints "press volume down 5x", waits, while
 # logging every MOST control message it can see to stdout and /mnt/umass01200t7/volcap.log. No daemon, no env needed.
 volcap: tools/volcap.cpp src/dsi_client.cpp src/dsi_client.hpp src/most/ids.hpp src/most/msg.hpp
@@ -156,7 +165,7 @@ volcap: tools/volcap.cpp src/dsi_client.cpp src/dsi_client.hpp src/most/ids.hpp 
 
 clean:
 	@echo [CLEAN] Removing object files and binaries
-	rm -f $(OBJS) $(OBJS:.o=.d) $(TARGET) test_display test_controls plugin/libhmiaad.so plugin/plugin_check wfd_probe pf_aa
+	rm -f $(OBJS) $(OBJS:.o=.d) $(TARGET) test_display test_controls plugin/libhmiaad.so plugin/plugin_check wfd_probe pf_aa nbt-aad-coding
 
 # osdprobe: standalone check that this unit lets us own an LM surface for our own window.
 osdprobe: tools/osdprobe.cpp

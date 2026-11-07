@@ -67,11 +67,12 @@ SRC_test_route_policy      :=
 SRC_test_sdr               := src/sdr_builder.cpp
 SRC_test_sdr_drop          := src/sdr_builder.cpp
 SRC_test_video_geometry    := src/sdr_builder.cpp
-SRC_test_session_control   := src/aa_cryptor.cpp src/aa_session.cpp src/audio/audio_acks.cpp src/crash_handler.cpp src/sdr_builder.cpp
-SRC_test_session_lifecycle := src/aa_cryptor.cpp src/aa_session.cpp src/audio/audio_acks.cpp src/crash_handler.cpp src/sdr_builder.cpp
-SRC_test_session_bye       := src/aa_session.cpp src/audio/audio_acks.cpp src/crash_handler.cpp src/sdr_builder.cpp
+SRC_test_session_control   := src/aa_cryptor.cpp src/aa_session.cpp src/audio/audio_acks.cpp src/crash_handler.cpp src/sdr_builder.cpp src/car/coding_read.cpp
+SRC_test_session_lifecycle := src/aa_cryptor.cpp src/aa_session.cpp src/audio/audio_acks.cpp src/crash_handler.cpp src/sdr_builder.cpp src/car/coding_read.cpp
+SRC_test_session_bye       := src/aa_session.cpp src/audio/audio_acks.cpp src/crash_handler.cpp src/sdr_builder.cpp src/car/coding_read.cpp
 SRC_test_session_owner     :=
-SRC_test_session_sensors   := src/audio/audio_acks.cpp src/crash_handler.cpp src/sdr_builder.cpp
+SRC_test_session_sensors   := src/audio/audio_acks.cpp src/crash_handler.cpp src/sdr_builder.cpp src/car/coding_read.cpp
+SRC_test_car_coding        := src/car/coding_read.cpp
 SRC_test_touch             := src/touch_probe.cpp
 SRC_test_touch_frame       :=
 SRC_test_usb_accessory     := src/tcp_server.cpp src/usb_accessory.cpp src/usb_direct.cpp src/wireless_setup.cpp
@@ -86,6 +87,7 @@ SRC_test_wpp               := src/wireless_setup.cpp
 ARGS_test_ccs_decoder := tests/fixtures/controls_2026-10-22_e5.txt
 ARGS_test_ccs_push    := tests/fixtures/controls_2026-10-23_push.txt
 ARGS_test_ccs_input   := tests/fixtures/controls_2026-10-23_push.txt
+ARGS_test_car_coding  := tests/$(OUT)/nbt-aad-coding tests/$(OUT)/libfake_syset.so
 
 TESTS := $(patsubst SRC_%,%,$(filter SRC_test_%,$(.VARIABLES)))
 
@@ -118,6 +120,13 @@ $(foreach t,$(TESTS),$(eval $(call TEST_RULES,$(t))))
 # This one #includes aa_session.cpp, so it is not in its SRC list, and with several sources -MF keeps only the last one's
 # dependencies: without this line, a change to the session would not rebuild it.
 $(OUT)/test_session_sensors: $(ROOT)/src/aa_session.cpp $(ROOT)/src/aa_session.hpp $(ROOT)/src/aa_sensor_msg.hpp $(ROOT)/src/aa_proto.hpp stub_cryptor.hpp
+
+# The helper as the daemon's build makes it, and a settings library for it to load.
+$(OUT)/test_car_coding: $(OUT)/nbt-aad-coding $(OUT)/libfake_syset.so $(ROOT)/src/car/coding_read.hpp $(ROOT)/src/car/coding.hpp
+$(OUT)/nbt-aad-coding: $(ROOT)/tools/nbt_aad_coding.cpp $(ROOT)/tools/nbt_aad_coding.syms $(ROOT)/src/car/coding.hpp | $(OUT)
+	$(HOST_CXX) $(CXXFLAGS) -Wl,--dynamic-list=$(ROOT)/tools/nbt_aad_coding.syms -o $@ $(ROOT)/tools/nbt_aad_coding.cpp -ldl
+$(OUT)/libfake_syset.so: fake_syset_lib.cpp $(ROOT)/src/car/coding.hpp | $(OUT)
+	$(HOST_CXX) $(CXXFLAGS) -shared -fPIC -o $@ fake_syset_lib.cpp
 
 # Frames are not really encrypted in this one, so it can script the phone without a TLS handshake.
 $(OUT)/test_session_bye: CXXFLAGS += -include stub_cryptor.hpp

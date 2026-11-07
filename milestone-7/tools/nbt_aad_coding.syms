@@ -1,0 +1,5 @@
+{
+    doFatalError;
+    SysetPageGet_getMappedCbBuffer;
+    SysetPageGet_getMappedCbValue;
+};
