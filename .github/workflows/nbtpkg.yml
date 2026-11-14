@@ -4,7 +4,14 @@
 # Packages a published release for NBTApps with tools/nbtpkg/make_nbtpkg.py: it takes the release's nbt-aad and
 # Releases.zip, checks them, builds a .nbtpkg signed with the author key, and attaches the archive and its record
 # (nbtpkg-record.json) to the same release. Nothing is built or run here: the two programs are read as data only.
-# Run it again by hand with the release's tag when the files were attached after publishing.
+# Run it again by hand with the release's tag when the files were attached after publishing, or when a
+# pre-release has been changed to a full release (that is not published again, so nothing starts this by itself).
+#
+# Two cases end the run well with nothing packaged, with a notice and a line in the summary:
+#   - there is no tools/nbtpkg/author.pub yet: the set-up is not finished. The fetch step decides this before any
+#     network call, and the sign step then does nothing. With author.pub there, a missing or wrong key fails.
+#   - the release is marked pre-release (read from the API, for a run by tag too): pre-releases are not packaged
+#     for now (PACKAGE_PRERELEASES in make_nbtpkg.py), so they do not use up a version.
 #
 # It is safe because: it runs on a published release or by hand, never on a pull request, so only someone who can
 # publish a release or run a workflow can start it. The token has contents: write only, which attaching a file to

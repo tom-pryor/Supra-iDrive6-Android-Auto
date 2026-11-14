@@ -34,7 +34,8 @@ an older release is refused.
 3. In this repo on GitHub, go to Settings, Environments, and make an environment called `nbtpkg`. Add a secret to
    it called `NBTPKG_AUTHOR_KEY`, holding the line of 64 hex characters from `nbt-aad.key` (not the `#` line).
    You can also add yourself as a required reviewer there, so each run waits for you.
-4. Copy `nbt-aad.pub` to `tools/nbtpkg/author.pub` and commit it.
+4. Copy `nbt-aad.pub` to `tools/nbtpkg/author.pub` and commit it. Do this after step 3: once `author.pub` is
+   there, a run without the right key fails.
 5. Make the first release (see below), so there is an archive and a record.
 6. Open the first pull request to [nbtapps-packages](https://github.com/tom-pryor/nbtapps-packages) by hand. It
    adds `packages/com.github.sq00ky.android-auto/` with:
@@ -42,7 +43,11 @@ an older release is refused.
    - `author.pub`: the same file as `tools/nbtpkg/author.pub`
    - `versions/<version>.json`: the `record` part of `nbtpkg-record.json` from the release
 
-Until `author.pub` and the secret are there, the workflow stops at the sign step and says why.
+Until `author.pub` is committed, the set-up is not finished. Each run then ends well and packages nothing: it
+shows a notice and a line in the run's summary that say so. It decides this first, before it fetches anything.
+
+Once `author.pub` is there, the set-up has to work. A missing secret, or a secret that is not the key of
+`author.pub`, makes the run fail.
 
 ## At each release
 
@@ -51,11 +56,15 @@ Until `author.pub` and the secret are there, the workflow stops at the sign step
    number is refused.
 2. Build and create the release as now, with `nbt-aad` and `Releases.zip` attached. `Releases.zip` holds exactly
    the five plugin files under `Releases/`.
-3. Mark a test build as **pre-release**. It is still packaged, but the bot in nbtapps-packages only proposes
-   releases that are not pre-releases. It reads `nbtpkg-record.json` from the release to do that.
+3. Mark a test build as **pre-release**. A pre-release is not packaged, for now: the run ends well with a notice,
+   attaches nothing, and the version number is not used up. (`PACKAGE_PRERELEASES` at the top of
+   `make_nbtpkg.py` turns this off.)
 4. When the release is published, the workflow `nbtpkg` runs. It attaches
    `com.github.sq00ky.android-auto-<version>.nbtpkg` and `nbtpkg-record.json`, and shows the record in the run's
-   summary.
+   summary. The bot in nbtapps-packages reads `nbtpkg-record.json` from the release to propose the new version.
+
+A pre-release that is later changed to a full release is not picked up by itself: GitHub does not publish it
+again. Run the workflow by hand for its tag (see below).
 
 The workflow stops and says why when:
 
@@ -65,12 +74,13 @@ The workflow stops and says why when:
   time
 - `nbt-aad` has no `NBT-AAD-VERSION=v...` string
 - the archive of that version is on another release, or on this one with other bytes
-- `author.pub` or the secret is missing, or the secret is not the key of `author.pub`
+- `author.pub` is there but cannot be read, or the secret is missing or not the key of `author.pub`
 
 ## Running it again
 
 If the files were attached after the release was published, the first run fails because they were not there yet.
-Run it again from the Actions tab: workflow `nbtpkg`, Run workflow, and give the release's tag.
+Run it again from the Actions tab: workflow `nbtpkg`, Run workflow, and give the release's tag. Do the same for a
+pre-release that has been changed to a full release. A run by tag skips a pre-release in the same way.
 
 Running it again on a release that already has its package is fine. It builds the same bytes again, sees they are
 already there, and changes nothing.

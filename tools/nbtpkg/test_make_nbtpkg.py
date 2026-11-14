@@ -88,6 +88,7 @@ class FakeGitHub:
         self.repo = REPO
         self.all = releases
         self.uploads = []
+        self.downloads = []
         self.next_id = 1000
 
     def repo_url(self):
@@ -100,6 +101,7 @@ class FakeGitHub:
         return iter(self.all)
 
     def download(self, asset, limit):
+        self.downloads.append(asset["name"])
         if len(asset["_data"]) > limit:
             raise mk.Refused("%s is too large" % asset["name"])
         return asset["_data"]
@@ -152,8 +154,8 @@ class Base(unittest.TestCase):
         self.assertNotIn("\n", str(caught.exception))
         return str(caught.exception)
 
-    def fetch(self, gh, work="work"):
-        return mk.run_fetch(gh, nbt, TAG, self.path(work))
+    def fetch(self, gh, work="work", tag=TAG):
+        return mk.run_fetch(gh, nbt, tag, self.path(work), environ={"GITHUB_STEP_SUMMARY": self.path("summary.md")})
 
     def sign(self, gh, work="work", seed=None, public=None):
         return mk.run_sign(gh, nbt, self.path(work), seed or self.seed, public or self.public,
@@ -226,12 +228,37 @@ class HappyPath(Base):
         self.assertEqual(self.sign(gh, "two"), first)
         self.assertEqual(gh.uploads, uploads)
 
-    def test_pre_release_still_packaged(self):
+    def test_pre_release_not_packaged(self):
         gh = FakeGitHub([release(prerelease=True)])
-        self.fetch(gh)
-        self.sign(gh)
+        self.assertEqual(set(self.fetch(gh)), {"skip"})
+        self.assertEqual(gh.downloads, [])
+        self.assertIsNone(mk.sign_step(nbt, self.path("work"), author_pub=self.path("none.pub"), environ={}))
+        self.assertEqual(gh.uploads, [])
         with open(self.path("summary.md"), encoding="utf-8") as f:
-            self.assertIn("pre-release", f.read())
+            self.assertIn("Not packaged: the release %s is a pre-release" % TAG, f.read())
+
+    def test_pre_release_does_not_use_up_the_version(self):
+        gh = FakeGitHub([release("test-build", rid=5, prerelease=True), release()])
+        self.assertEqual(set(self.fetch(gh, "pre", tag="test-build")), {"skip"})   # same version, skipped
+        self.fetch(gh)
+        self.assertEqual(self.sign(gh)["version"], VERSION)
+        self.assertEqual({u[0] for u in gh.uploads}, {TAG})
+
+    def test_became_pre_release_before_sign(self):
+        gh = FakeGitHub([release()])
+        self.fetch(gh)
+        gh.all[0]["prerelease"] = True
+        self.assertIsNone(self.sign(gh))
+        self.assertEqual(gh.uploads, [])
+
+    def test_pre_release_switch(self):
+        gh = FakeGitHub([release(prerelease=True)])
+        with mock.patch.object(mk, "PACKAGE_PRERELEASES", True):
+            self.fetch(gh)
+            self.sign(gh)
+        self.assertEqual([u[1] for u in gh.uploads], [mk.archive_name(VERSION), mk.RECORD_ASSET])
+        with open(self.path("summary.md"), encoding="utf-8") as f:
+            self.assertIn("is a pre-release: the record is not proposed", f.read())
 
     def test_no_title_no_notes(self):
         gh = FakeGitHub([release(name="  \t ")])
@@ -400,74 +427,134 @@ class SignRefusals(Base):
 
 
 class CommandLine(Base):
-    """main(): the key arrives in NBTPKG_AUTHOR_KEY, is never printed, and author.pub must be there."""
+    """main(): the key arrives in NBTPKG_AUTHOR_KEY and is never printed. Without author.pub the set-up is not
+    finished and both steps end well with nothing done; with it, a missing or wrong key fails."""
 
     def run_main(self, argv, environ, author_pub, gh):
         stdout, stderr = io.StringIO(), io.StringIO()
         code = 0
+        environ = dict({"GITHUB_STEP_SUMMARY": self.path("summary.md")}, **environ)
         with mock.patch.dict(os.environ, environ), mock.patch.object(mk, "AUTHOR_PUB", author_pub), \
                 mock.patch.object(mk.GitHub, "from_env", return_value=gh), \
                 contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            if "NBTPKG_AUTHOR_KEY" not in environ:
+                os.environ.pop("NBTPKG_AUTHOR_KEY", None)
             try:
                 mk.main(["--nbtapps", NBTAPPS] + argv)
             except SystemExit as e:
                 code = e.code
         return code, stdout.getvalue() + stderr.getvalue()
 
-    def write_pub(self, public):
+    def write_pub(self, public, text=None):
         path = self.path("author.pub")
         with open(path, "w") as f:
-            f.write("# invented test key\n%s\n" % public.hex())
+            f.write(text if text is not None else "# invented test key\n%s\n" % public.hex())
         return path
 
-    def test_sign_by_main(self):
-        gh = FakeGitHub([release()])
-        pub = self.write_pub(self.public)
-        env = {"NBTPKG_AUTHOR_KEY": self.seed.hex() + "\n", "GITHUB_STEP_SUMMARY": self.path("summary.md")}
-        code, output = self.run_main(["fetch", "--tag", TAG, "--work", self.path("work")], {}, pub, gh)
+    def fetched(self, gh=None):
+        gh = gh or FakeGitHub([release()])
+        code, output = self.run_main(["fetch", "--tag", TAG, "--work", self.path("work")], {},
+                                     self.write_pub(self.public), gh)
         self.assertEqual(code, 0, output)
-        code, output = self.run_main(["sign", "--work", self.path("work")], env, pub, gh)
+        return gh
+
+    def summary(self):
+        with open(self.path("summary.md"), encoding="utf-8") as f:
+            return f.read()
+
+    def test_sign_by_main(self):
+        gh = self.fetched()
+        env = {"NBTPKG_AUTHOR_KEY": self.seed.hex() + "\n"}
+        code, output = self.run_main(["sign", "--work", self.path("work")], env, self.path("author.pub"), gh)
         self.assertEqual(code, 0, output)
         self.assertNotIn(self.seed.hex(), output)
         self.assertIn('"id": "%s"' % mk.PACKAGE_ID, output)
+        self.assertEqual([u[1] for u in gh.uploads], [mk.archive_name(VERSION), mk.RECORD_ASSET])
         for name in os.listdir(self.path("work")):
             if os.path.isfile(self.path("work", name)):
                 with open(self.path("work", name), "rb") as f:
                     self.assertNotIn(self.seed.hex().encode(), f.read())
 
-    def test_author_pub_missing(self):
+    def test_author_pub_missing_skips_both_steps(self):
+        env = {"GITHUB_ACTIONS": "true"}
+        no_network = mock.Mock(side_effect=AssertionError("a network call"))
+        with mock.patch.object(mk.GitHub, "_call", no_network):
+            code, output = self.run_main(["fetch", "--tag", TAG, "--work", self.path("work")], env,
+                                         self.path("none.pub"), mk.GitHub(REPO, "invented-token"))
+            self.assertEqual(code, 0, output)
+            self.assertIn("::notice::the set-up is not finished", output)
+            self.assertIn("tools/nbtpkg/README.md", output)
+            self.assertEqual(os.listdir(self.path("work")), ["state.json"])
+            # the sign step: no key, no author.pub, and still no failure
+            code, output = self.run_main(["sign", "--work", self.path("work")], env, self.path("none.pub"),
+                                         mk.GitHub(REPO, "invented-token"))
+        self.assertEqual(code, 0, output)
+        self.assertIn("nothing to sign: the set-up is not finished", output)
+        no_network.assert_not_called()
+        self.assertIn("Not packaged: the set-up is not finished", self.summary())
+        self.assertIn("tools/nbtpkg/README.md", self.summary())
+
+    def test_author_pub_broken_fails(self):
         gh = FakeGitHub([release()])
-        self.run_main(["fetch", "--tag", TAG, "--work", self.path("work")], {}, self.path("none.pub"), gh)
-        code, output = self.run_main(["sign", "--work", self.path("work")],
-                                     {"NBTPKG_AUTHOR_KEY": self.seed.hex()}, self.path("none.pub"), gh)
-        self.assertIn("refused", str(code))
-        self.assertIn("author key has not been made yet", str(code))
+        code, _ = self.run_main(["fetch", "--tag", TAG, "--work", self.path("work")], {},
+                                self.write_pub(None, "not a key\n"), gh)
+        self.assertIn("author.pub is not a key", str(code))
+        self.assertEqual(gh.downloads, [])
+
+    def test_key_missing_fails(self):
+        gh = self.fetched()
+        code, _ = self.run_main(["sign", "--work", self.path("work")], {}, self.path("author.pub"), gh)
+        self.assertIn("NBTPKG_AUTHOR_KEY is not set", str(code))
         self.assertEqual(gh.uploads, [])
 
-    def test_key_missing(self):
-        gh = FakeGitHub([release()])
-        self.run_main(["fetch", "--tag", TAG, "--work", self.path("work")], {}, self.path("none.pub"), gh)
-        with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("NBTPKG_AUTHOR_KEY", None)
-            code, _ = self.run_main(["sign", "--work", self.path("work")], {}, self.write_pub(self.public), gh)
+    def test_key_empty_fails(self):
+        gh = self.fetched()
+        code, _ = self.run_main(["sign", "--work", self.path("work")], {"NBTPKG_AUTHOR_KEY": ""},
+                                self.path("author.pub"), gh)
         self.assertIn("NBTPKG_AUTHOR_KEY is not set", str(code))
+        self.assertEqual(gh.uploads, [])
 
-    def test_key_malformed_not_echoed(self):
-        gh = FakeGitHub([release()])
-        self.run_main(["fetch", "--tag", TAG, "--work", self.path("work")], {}, self.path("none.pub"), gh)
+    def test_key_malformed_fails_not_echoed(self):
+        gh = self.fetched()
         bad = self.seed.hex()[:-2] + "zz"
         code, output = self.run_main(["sign", "--work", self.path("work")], {"NBTPKG_AUTHOR_KEY": bad},
-                                     self.write_pub(self.public), gh)
+                                     self.path("author.pub"), gh)
         self.assertIn("NBTPKG_AUTHOR_KEY is not a key", str(code))
         self.assertNotIn(bad, str(code) + output)
+        self.assertEqual(gh.uploads, [])
+
+    def test_key_not_author_pub_fails(self):
+        gh = self.fetched()
+        other = bytes(range(1, 33))   # invented
+        code, output = self.run_main(["sign", "--work", self.path("work")], {"NBTPKG_AUTHOR_KEY": other.hex()},
+                                     self.path("author.pub"), gh)
+        self.assertIn("not signed by the key in the author public key file", str(code))
+        self.assertNotIn(other.hex(), str(code) + output)
         self.assertEqual(gh.uploads, [])
 
     def test_old_build_by_main(self):
         gh = FakeGitHub([release(files={mk.DAEMON: fake_daemon(strings=(b"/opt/aa",)),
                                         mk.PLUGIN_ZIP: make_zip(fake_plugin())})])
-        code, output = self.run_main(["fetch", "--tag", TAG, "--work", self.path("work")], {}, self.path("x"), gh)
+        code, output = self.run_main(["fetch", "--tag", TAG, "--work", self.path("work")], {},
+                                     self.write_pub(self.public), gh)
         self.assertIn("built before the programs found their folders at run time", str(code))
         self.assertIn("v2.3.4-test", output)
+
+    def test_pre_release_skips_both_steps(self):
+        gh = FakeGitHub([release(prerelease=True)])
+        env = {"GITHUB_ACTIONS": "true"}
+        code, output = self.run_main(["fetch", "--tag", TAG, "--work", self.path("work")], env,
+                                     self.write_pub(self.public), gh)
+        self.assertEqual(code, 0, output)
+        self.assertIn("::notice::the release %s is a pre-release" % TAG, output)
+        self.assertEqual(gh.downloads, [])
+        self.assertEqual(os.listdir(self.path("work")), ["state.json"])
+        code, output = self.run_main(["sign", "--work", self.path("work")],
+                                     dict(env, NBTPKG_AUTHOR_KEY=self.seed.hex()), self.path("author.pub"), gh)
+        self.assertEqual(code, 0, output)
+        self.assertIn("nothing to sign: the release %s is a pre-release" % TAG, output)
+        self.assertEqual(gh.uploads, [])
+        self.assertIn("Not packaged: the release %s is a pre-release" % TAG, self.summary())
 
 
 class Local(Base):

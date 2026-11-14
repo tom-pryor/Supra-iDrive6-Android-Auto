@@ -25,6 +25,12 @@ Nothing is built here. The package holds the files a release already has: `nbt-a
 `sign` takes the author key from the environment variable NBTPKG_AUTHOR_KEY: the 64 hex characters of the key's
 private half. It is never written to disk or printed. Only the sign step of the workflow gets it.
 
+Two cases end the run successfully with nothing packaged, with a notice and a line in the job summary:
+  - there is no tools/nbtpkg/author.pub yet: the set-up is not finished. `fetch` decides this first, before any
+    network call. Once author.pub is there, a missing or wrong NBTPKG_AUTHOR_KEY fails: that set-up is broken.
+  - the release is marked pre-release, and PACKAGE_PRERELEASES (below) is False, as it is for now.
+`fetch` then writes only the reason to DIR/state.json, and `sign` reads it and does nothing.
+
 Run again on a release that already has the package, it builds the same bytes again (the build and Ed25519 are
 both deterministic) and ends with nothing changed. A package of the same version with other bytes, or on another
 release, is refused: a published version never changes, so the daemon's version must be raised.
@@ -64,6 +70,9 @@ PLUGIN_FILES = ("libNbtAad.so", "NbtAad.manifest", "NbtAad.xml", "NbtAad_ALL_Tex
 PLUGIN_LIBRARY = "libNbtAad.so"
 RECORD_ASSET = "nbtpkg-record.json"
 VERSION_PLACEHOLDER = "@VERSION@"
+# For now a release marked pre-release is not packaged: the run ends with a notice and attaches nothing, so the
+# version is not used up. Set this to True to package pre-releases as well.
+PACKAGE_PRERELEASES = False
 # A build that finds its folders at run time names them. One built before that change does not, and is refused.
 FOLDER_STRINGS = (b"/var/opt/nbtapp/apps/" + PACKAGE_ID.encode("ascii"),
                   b"/var/opt/nbtapp/data/" + PACKAGE_ID.encode("ascii"))
@@ -540,17 +549,82 @@ def asset_named(release, name):
     return None
 
 
-# ---- the three commands ----------------------------------------------------------------------------------------
+# ---- skipping: set-up not finished, or a pre-release -----------------------------------------------------------
 
-def run_fetch(gh, nbt, tag, work):
-    """Steps 1 to 5. Writes the staged package to WORK/stage and what `sign` needs to WORK/state.json."""
+def notice(text, environ=None):
+    """A notice in the log, as an annotation on GitHub, and a line in the job summary."""
+    environ = os.environ if environ is None else environ
+    say(text)
+    if environ.get("GITHUB_ACTIONS") == "true":
+        print("::notice::" + clean(text).replace("%", "%25"), flush=True)
+    write_summary("## NBTApps package\n\nNot packaged: %s.\n" % text, environ)
+
+
+def skip(work, reason, environ=None):
+    """Ends the fetch step with nothing staged. The sign step then reads the reason and does nothing."""
+    notice(reason, environ)
+    write_file(os.path.join(work, "state.json"), (json.dumps({"skip": reason}, indent=2) + "\n").encode("utf-8"))
+    return {"skip": reason}
+
+
+def prerelease_skip(release):
+    """Why this release is not packaged, or None. PACKAGE_PRERELEASES is the switch."""
+    if release.get("prerelease") and not PACKAGE_PRERELEASES:
+        return ("the release %s is a pre-release, and pre-releases are not packaged for now, so nothing is "
+                "attached (tools/nbtpkg/README.md)" % release.get("tag_name"))
+    return None
+
+
+def check_empty(work):
     if os.path.exists(work) and os.listdir(work):
         raise Refused("%s is not empty" % work)
+
+
+def fetch_step(nbt, tag, work, author_pub=None, environ=None, github=None):
+    """The workflow's first step. Without tools/nbtpkg/author.pub the set-up is not finished: that is decided here,
+    before anything goes over the network, and the run ends without failing."""
+    check_empty(work)
+    author_pub = author_pub or AUTHOR_PUB
+    if not os.path.exists(author_pub):
+        return skip(work, "the set-up is not finished: there is no tools/nbtpkg/author.pub yet, so nothing is "
+                          "signed or attached (tools/nbtpkg/README.md says how to finish it)", environ)
+    read_public_key(author_pub)     # there but broken is a broken set-up, and fails
+    return run_fetch(github or GitHub.from_env(environ), nbt, tag, work, environ)
+
+
+def read_state(work):
+    try:
+        with open(os.path.join(work, "state.json"), "rb") as f:
+            return json.loads(f.read().decode("utf-8"))
+    except (OSError, ValueError):
+        raise Refused("%s has no state.json from the fetch step" % work)
+
+
+def sign_step(nbt, work, author_pub=None, environ=None, github=None):
+    """The workflow's second step. Does nothing when the fetch step skipped. Otherwise author.pub and the key
+    must both be there and agree, or it fails."""
+    state = read_state(work)
+    if state.get("skip"):
+        say("nothing to sign: %s" % state["skip"])
+        return None
+    public = read_public_key(author_pub or AUTHOR_PUB)
+    seed = key_from_env(environ)
+    return run_sign(github or GitHub.from_env(environ), nbt, work, seed, public, environ)
+
+
+# ---- the steps -------------------------------------------------------------------------------------------------
+
+def run_fetch(gh, nbt, tag, work, environ=None):
+    """Steps 1 to 5. Writes the staged package to WORK/stage and what `sign` needs to WORK/state.json."""
+    check_empty(work)
     release = gh.release_by_tag(tag)
     if not release:
         raise Refused("the repo %s has no published release with the tag %s" % (gh.repo, tag))
     say("release %s (%s)%s" % (tag, release.get("name") or "no title",
                                ", a pre-release" if release.get("prerelease") else ""))
+    reason = prerelease_skip(release)
+    if reason:
+        return skip(work, reason, environ)
 
     # 1. the two files
     for name in (DAEMON, PLUGIN_ZIP):
@@ -593,13 +667,19 @@ def check_files(daemon, plugin_zip=None, plugin=None):
 
 
 def run_sign(gh, nbt, work, seed, public, environ=None):
-    """Steps 6 to 8. Returns the record."""
-    try:
-        with open(os.path.join(work, "state.json"), "rb") as f:
-            state = json.loads(f.read().decode("utf-8"))
-    except (OSError, ValueError):
-        raise Refused("%s has no state.json from the fetch step" % work)
+    """Steps 6 to 8. Returns the record, or None when the release has become a pre-release meanwhile."""
+    state = read_state(work)
+    if state.get("skip"):
+        raise Refused("the fetch step packaged nothing: %s" % state["skip"])
     version, archive, tag = state["version"], state["archive"], state["tag"]
+
+    release = gh.release_by_tag(tag)
+    if not release or release["id"] != state["release"]:
+        raise Refused("the release of the tag %s is not the one the fetch step read" % tag)
+    reason = prerelease_skip(release)
+    if reason:
+        notice(reason, environ)
+        return None
 
     # 6. build, sign, verify
     data = build_and_verify(nbt, os.path.join(work, "stage"), version, seed, public)
@@ -607,9 +687,6 @@ def run_sign(gh, nbt, work, seed, public, environ=None):
     say("built %s: %d bytes, SHA-256 %s, signed and verified" % (archive, len(data), digest))
 
     # 7. attach, never over an asset that is there
-    release = gh.release_by_tag(tag)
-    if not release or release["id"] != state["release"]:
-        raise Refused("the release of the tag %s is not the one the fetch step read" % tag)
     asset = find_published(gh, release, archive)
     if asset is not None:
         if hashlib.sha256(gh.download(asset, MAX_ARCHIVE)).hexdigest() != digest:
@@ -745,11 +822,9 @@ def main(argv=None):
     try:
         nbt = load_nbtpkg(args.nbtapps)
         if args.command == "fetch":
-            run_fetch(GitHub.from_env(), nbt, args.tag, args.work)
+            fetch_step(nbt, args.tag, args.work)
         elif args.command == "sign":
-            public = read_public_key(AUTHOR_PUB)
-            seed = key_from_env()
-            run_sign(GitHub.from_env(), nbt, args.work, seed, public)
+            sign_step(nbt, args.work)
         else:
             run_local(nbt, args)
     except Refused as e:
